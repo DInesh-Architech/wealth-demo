@@ -1,0 +1,228 @@
+<!--
+Wealth MVP - Single-file Netlify-ready frontend
+Filename: index.html
+
+Instructions:
+1. Replace API_URL value below with your Apps Script Exec URL (no ?json=1) at: const API_URL = 'REPLACE_WITH_YOUR_EXEC_URL';
+2. (Optional) For Emergent POSTs, enter the EMERGENT API KEY in the admin modal when prompted.
+3. Drop this file onto Netlify Drop (https://app.netlify.com/drop) OR host as a static file. Works without a build step.
+4. CORS: Apps Script web app should allow requests when deployed as "Anyone". If you see CORS issues, host this file on http(s) origin (Netlify) rather than file://.
+
+Features:
+- Fetches projects from API and lists them as cards
+- Search by projectName / microLocation
+- Filter by wealthScore range
+- Lead form (POST action: lead)
+- Admin emergent form (POST action: emergent) protected by entering your emergent API key
+- Simple responsive layout
+
+Note: This is purposely light, no frameworks. Tweak styles or copy into a React app later.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WEALTH - Demo</title>
+  <style>
+    :root{--accent:#0f62fe;--muted:#6b6b6b;--card:#fff;--bg:#f6f8fb}
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial; margin:0;background:var(--bg);color:#111}
+    header{background:linear-gradient(90deg,#0747a6 0%, #0f62fe 100%);color:#fff;padding:18px 22px;display:flex;align-items:center;justify-content:space-between}
+    header h1{font-size:18px;margin:0}
+    header .controls{display:flex;gap:10px;align-items:center}
+    .container{max-width:1100px;margin:22px auto;padding:0 18px}
+    .toolbar{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+    .input, .select{padding:8px 10px;border-radius:8px;border:1px solid #e0e6ef;background:#fff}
+    .btn{background:var(--accent);color:#fff;border:none;padding:9px 12px;border-radius:8px;cursor:pointer}
+    .btn.ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.18)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+    .card{background:var(--card);border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(12,18,26,0.06)}
+    .card h3{margin:0 0 6px 0;font-size:16px}
+    .meta{font-size:13px;color:var(--muted);margin-bottom:8px}
+    .score{display:inline-block;padding:6px 8px;border-radius:8px;background:#f1f6ff;color:var(--accent);font-weight:600}
+    .card .actions{display:flex;gap:8px;margin-top:10px}
+    .small{font-size:13px;color:var(--muted)}
+
+    /* modal */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:none;align-items:center;justify-content:center}
+    .modal{background:#fff;padding:18px;border-radius:10px;width:520px;max-width:95%;box-shadow:0 10px 40px rgba(2,6,23,0.3)}
+    .modal h2{margin:0 0 10px 0}
+    .field{margin-bottom:10px}
+    label{display:block;font-size:13px;color:#333;margin-bottom:6px}
+    input[type=text],input[type=email],textarea{width:100%;padding:9px;border-radius:8px;border:1px solid #e6eef8}
+    textarea{min-height:100px}
+
+    footer{max-width:1100px;margin:26px auto;padding:0 18px;color:var(--muted);font-size:13px}
+
+    @media(max-width:600px){header{padding:12px} .toolbar{flex-direction:column} .card{padding:12px}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WEALTH — Demo</h1>
+    <div class="controls">
+      <button class="btn" id="openAdmin">Admin</button>
+      <button class="btn" id="openLead">Submit Lead</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="toolbar">
+      <input id="search" class="input" placeholder="Search by project or location..." />
+      <select id="scoreFilter" class="select">
+        <option value="all">All Scores</option>
+        <option value="80">Wealth &gt;= 80</option>
+        <option value="60">Wealth &gt;= 60</option>
+        <option value="40">Wealth &gt;= 40</option>
+      </select>
+      <button id="refresh" class="btn">Refresh</button>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <div class="small">Projects:</div><div id="count" class="small">0</div>
+      </div>
+    </div>
+
+    <div id="list" class="grid"></div>
+
+    <div id="empty" style="display:none;text-align:center;color:var(--muted);margin-top:40px">No projects found.</div>
+  </main>
+
+  <footer>Tip: Replace <code>API_URL</code> in the JS with your Apps Script Exec URL. Deploy this single file to Netlify Drop for HTTPS hosting.</footer>
+
+  <!-- Lead Modal -->
+  <div id="leadModal" class="modal-backdrop">
+    <div class="modal">
+      <h2>Submit Lead</h2>
+      <div class="field"><label>Name</label><input id="lead_name" type="text" /></div>
+      <div class="field"><label>Email</label><input id="lead_email" type="email" /></div>
+      <div class="field"><label>Phone</label><input id="lead_phone" type="text" /></div>
+      <div class="field"><label>Project ID (optional)</label><input id="lead_project" type="text" placeholder="P001"/></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="leadSend">Send</button><button class="btn" id="leadClose">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Admin Emergent Modal -->
+  <div id="adminModal" class="modal-backdrop">
+    <div class="modal">
+      <h2>Admin — Emergent Report</h2>
+      <div class="field"><label>Emergent API Key</label><input id="admin_key" type="text" placeholder="paste emergent api key" /></div>
+      <div class="field"><label>Project ID</label><input id="admin_project" type="text" placeholder="P001" /></div>
+      <div class="field"><label>Type</label><input id="admin_type" type="text" value="AQI" /></div>
+      <div class="field"><label>Severity (1-5)</label><input id="admin_severity" type="text" value="4" /></div>
+      <div class="field"><label>Notes</label><textarea id="admin_notes">Automated admin test</textarea></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="adminSend">Send</button><button class="btn" id="adminClose">Close</button></div>
+    </div>
+  </div>
+
+<script>
+// ===== CONFIG =====
+const API_URL = 'REPLACE_WITH_YOUR_EXEC_URL'; // <--- replace with your Apps Script exec URL
+// ==================
+
+const $ = id => document.getElementById(id);
+let projectsCache = [];
+
+async function fetchProjects(){
+  try{
+    const res = await fetch(API_URL+'?json=1');
+    const data = await res.json();
+    projectsCache = data;
+    renderList(data);
+  } catch(e){
+    console.error('fetch error', e);
+    alert('Failed to fetch projects. Check API_URL and deployment.');
+  }
+}
+
+function renderList(arr){
+  const list = $('list');
+  list.innerHTML='';
+  const q = $('search').value.trim().toLowerCase();
+  const scoreFilter = $('scoreFilter').value;
+  const filtered = arr.filter(p=>{
+    if(!p) return false;
+    const name = (p.projectName||'').toString().toLowerCase();
+    const loc = (p.microLocation||'').toString().toLowerCase();
+    if(q && !(name.includes(q)||loc.includes(q))) return false;
+    if(scoreFilter!=='all'){
+      const min = Number(scoreFilter);
+      const w = Number(p.wealthScore||0);
+      if(w < min) return false;
+    }
+    return true;
+  });
+
+  $('count').textContent = filtered.length;
+  if(filtered.length===0){$('empty').style.display='block'} else {$('empty').style.display='none'}
+
+  filtered.forEach(p=>{
+    const el = document.createElement('div'); el.className='card';
+    const name = p.projectName || p.projectId || 'Unnamed';
+    el.innerHTML = `
+      <h3>${escapeHtml(name)}</h3>
+      <div class="meta">${escapeHtml(p.microLocation||'')} • ${escapeHtml(p.zone||'')}</div>
+      <div><span class="score">${Math.round(Number(p.wealthScore||0))}</span></div>
+      <div class="small">Price: ${formatMoney(p.minPrice)} - ${formatMoney(p.maxPrice)} | Avg Rent Yield: ${p.rentYieldPercent||'N/A'}</div>
+      <div class="actions">
+        <button class="btn" onclick="openLeadModal('${escapeHtml(p.projectId||'')}')">Enquire</button>
+        <button class="btn" onclick="showDetails('${escapeHtml(p.projectId||'')}')">Details</button>
+      </div>
+    `;
+    list.appendChild(el);
+  });
+}
+
+function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;" })[c]); }
+function formatMoney(v){ if(!v) return '—'; return '₹'+Number(v).toLocaleString(); }
+
+// Lead Modal
+$('openLead').addEventListener('click',()=>openLeadModal(''));
+function openLeadModal(pid){ $('leadModal').style.display='flex'; if(pid) $('lead_project').value=pid; }
+$('leadClose').addEventListener('click',()=>$('leadModal').style.display='none');
+$('leadSend').addEventListener('click',async ()=>{
+  const name = $('lead_name').value.trim();
+  const email = $('lead_email').value.trim();
+  const phone = $('lead_phone').value.trim();
+  const pid = $('lead_project').value.trim();
+  if(!name || !email){ alert('Enter name and email'); return; }
+  const payload = { action:'lead', projectId: pid, projectName:'', name, email, phone, note:'Lead from demo frontend', source:'frontend' };
+  try{
+    const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const j = await r.json();
+    if(j.success){ alert('Lead submitted'); $('leadModal').style.display='none'; } else alert('Lead failed: '+(j.error||'unknown'));
+  }catch(e){ alert('Request failed: '+e); }
+});
+
+// Admin
+$('openAdmin').addEventListener('click',()=>$('adminModal').style.display='flex');
+$('adminClose').addEventListener('click',()=>$('adminModal').style.display='none');
+$('adminSend').addEventListener('click',async ()=>{
+  const key = $('admin_key').value.trim();
+  const pid = $('admin_project').value.trim();
+  const type = $('admin_type').value.trim()||'AQI';
+  const sev = Number($('admin_severity').value)||4;
+  const notes = $('admin_notes').value.trim();
+  if(!key || !pid){ alert('API key and projectId required'); return; }
+  const payload = { action:'emergent', projectId: pid, emergentType: type, emergentSeverity: sev, emergentNotes: notes, emergentSource:'admin-ui', apiKey: key };
+  try{
+    const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const j = await r.json();
+    if(j.success){ alert('Emergent reported'); $('adminModal').style.display='none'; fetchProjects(); } else alert('Emergent failed: '+(j.error||'unknown'));
+  }catch(e){ alert('Request failed: '+e); }
+});
+
+// Helpers
+function showDetails(pid){ const p = projectsCache.find(x=>String(x.projectId)===String(pid)); if(!p){ alert('Project not found'); return; } alert('Project: '+(p.projectName||p.projectId)+'\nWealth Score: '+p.wealthScore+'\nLocation: '+p.microLocation); }
+
+// Search + filter
+$('search').addEventListener('input',()=>renderList(projectsCache));
+$('scoreFilter').addEventListener('change',()=>renderList(projectsCache));
+$('refresh').addEventListener('click',fetchProjects);
+
+// initial
+fetchProjects();
+
+</script>
+</body>
+</html>
