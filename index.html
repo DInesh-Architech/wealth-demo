@@ -8,7 +8,7 @@
 <style>
   :root{
     --bg:#f3f8f6; --card:#ffffff; --muted:#6b6f76; --accent:#1db07a; --accent-dark:#13a16a;
-    --accent-2:#0c6; --score-bg:#fff4e6; --shadow:0 10px 30px rgba(15,23,42,0.06);
+    --score-bg:#fff4e6; --shadow:0 10px 30px rgba(15,23,42,0.06);
   }
   *{box-sizing:border-box}
   body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#0f1724;margin:0;background:linear-gradient(180deg,#f6fbfa 0%, #f3f8f6 100%)}
@@ -43,12 +43,10 @@
   .btn{background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:700}
   .btn.ghost{background:transparent;color:var(--accent);border:1px solid rgba(13,65,37,0.08)}
   footer{max-width:1150px;margin:30px auto;padding:0 18px;color:var(--muted);font-size:13px}
-
-  /* diagnostic box */
   .diag{position:fixed;right:18px;bottom:18px;background:#fff;padding:12px;border-radius:10px;box-shadow:0 10px 30px rgba(12,18,26,0.12);width:360px;z-index:60}
   .diag h4{margin:0 0 8px 0;font-size:14px}
   .diag input{width:100%;padding:8px;border-radius:8px;border:1px solid #e6efe9;margin-bottom:8px}
-  .diag .log{background:#0b1220;color:#fff;padding:8px;border-radius:6px;font-family:monospace;font-size:12px;max-height:160px;overflow:auto}
+  .diag .log{background:#0b1220;color:#fff;padding:8px;border-radius:6px;font-family:monospace;font-size:12px;max-height:180px;overflow:auto}
   @media(max-width:900px){
     .hero h2{font-size:32px}
     .grid{grid-template-columns:1fr}
@@ -111,24 +109,18 @@
   </div>
 
 <script>
-/* Full index.html — patched version
-   - robust normalizeProject mapping
-   - demo fallback data
-   - diagnostic logging and debug of first project
+/* Robust frontend + wealth scoring engine.
+   Replace your index.html with this complete file.
 */
 
-// ---------- Utilities ----------
+// utilities
 const $ = id => document.getElementById(id);
-function saveLog(text){
-  const l = $('diagLog');
-  const ts = new Date().toISOString().replace('T',' ').slice(0,19);
-  l.textContent = `[${ts}] ${text}\n` + l.textContent;
-}
+function saveLog(text){ const l = $('diagLog'); l.textContent = (new Date()).toISOString() + ' ' + text + '\\n' + l.textContent; }
 function setStatus(s){ $('diagStatus').textContent = s; }
 function getApi(){ return localStorage.getItem('WEALTH_API_URL') || ''; }
 function setApi(v){ if(!v) localStorage.removeItem('WEALTH_API_URL'); else localStorage.setItem('WEALTH_API_URL', v); }
 
-// fetch with timeout and error handling
+// fetch with timeout
 async function fetchWithTimeout(url, opts={}, timeout=12000){
   const controller = new AbortController();
   const id = setTimeout(()=>controller.abort(), timeout);
@@ -141,218 +133,55 @@ async function fetchWithTimeout(url, opts={}, timeout=12000){
   }
 }
 
-// ---------- Demo sample projects (fallback) ----------
-function demoProjects(){
-  return [
-    {
-      projectId: "P001",
-      projectName: "Skyline Aurelia",
-      microLocation: "Kondapur",
-      zone: "North",
-      min_price: "7600000",
-      max_price: "9800000",
-      avgRentYield: "2.85",
-      fundamentals: 6,
-      location: 6,
-      builder: 6,
-      delivery: 6,
-      vacancy: 5,
-      safety: 6,
-      community: 6,
-      total: 200,
-      unsold: 20
-    },
-    {
-      projectId: "P002",
-      projectName: "Cypress Urban Retreat",
-      microLocation: "Uppal",
-      zone: "North",
-      min_price: "12800000",
-      max_price: "19800000",
-      avgRentYield: "2.09",
-      fundamentals: 7,
-      location: 6,
-      builder: 6,
-      delivery: 5,
-      vacancy: 6,
-      safety: 6,
-      community: 7,
-      total: 150,
-      unsold: 5
-    },
-    // more demo items to fill the page visually
-    {
-      projectId: "P003", projectName: "Eden Park Residences", microLocation: "Madhapur", zone: "East",
-      min_price: "6300000", max_price: "20300000", avgRentYield: "5.42",
-      fundamentals: 6, location:6, builder:6, delivery:5, vacancy:5, safety:6, community:5, total:120, unsold:12
-    },
-    {
-      projectId: "P004", projectName: "Astra Nova", microLocation: "Bowrampet", zone: "East",
-      min_price: "12300000", max_price: "24700000", avgRentYield: "3.6",
-      fundamentals: 6, location:5, builder:6, delivery:7, vacancy:6, safety:5, community:6, total:220, unsold:22
-    }
-  ];
-}
-
-// ---------- Normalizers + safer parsing ----------
+// parse number safely
 function parseNum(v, fallback = 0) {
   if (v === null || v === undefined || v === '') return fallback;
   if (typeof v === 'number' && !isNaN(v)) return v;
-  // remove currency symbols, commas, spaces, percent signs, etc
-  const s = String(v).replace(/[,\s₹]+/g, '').replace(/%/g, '').replace(/[^\d\.\-]/g, '');
+  const s = String(v).replace(/[,₹\s%]+/g, '').replace(/[^\d\.\-]/g, '');
   const n = Number(s);
   return isNaN(n) ? fallback : n;
 }
 
-// normalize common alternative field names to our expected names
+// normalize API fields
 function normalizeProject(pRaw){
-  const p = Object.assign({}, pRaw); // shallow copy
+  const p = Object.assign({}, pRaw);
 
-  // --- PRICE ---
-  p.minPrice = parseNum(
-      p.minPrice ??
-      p.min_price ??
-      p.minPriceInr ??
-      p.min_price_inr ??
-      p.price_min ??
-      p.price_min_inr ??
-      p.priceMin
-  );
+  p.minPrice = parseNum(p.minPrice ?? p.min_price ?? p.minPriceInr ?? p.min_price_inr ?? p.min);
+  p.maxPrice = parseNum(p.maxPrice ?? p.max_price ?? p.maxPriceInr ?? p.max_price_inr ?? p.max);
+  p.rentYieldPercent = parseNum(p.rentYieldPercent ?? p.avgRentYield ?? p.rent_yield ?? p.rentYieldPercent);
+  p.totalUnits = parseNum(p.totalUnits ?? p.total_units ?? p.totalUnitsBuilt ?? p.unitsTotal ?? p.total);
+  p.unsoldUnits = parseNum(p.unsoldUnits ?? p.unsold ?? p.unsold_units ?? p.inventory);
+  p.fundamentalsScore = parseNum(p.fundamentalsScore ?? p.fundamentals ?? p.fundamentalScore);
+  p.environmentalScore = parseNum(p.environmentalScore ?? p.env ?? p.environment_score);
+  p.locationScore = parseNum(p.locationScore ?? p.location ?? p.location_score);
+  p.personalScore = parseNum(p.personalScore ?? p.personal_score ?? p.personalScoreVal);
+  p.builderReputationScore = parseNum(p.builderReputationScore ?? p.builder ?? p.builder_score);
+  p.deliveryHistoryScore = parseNum(p.deliveryHistoryScore ?? p.delivery ?? p.delivery_score);
+  p.vacancyRiskScore = parseNum(p.vacancyRiskScore ?? p.vacancy ?? p.vacancy_risk_score);
+  p.safetyIndex = parseNum(p.safetyIndex ?? p.safety ?? p.safety_score);
+  p.communityScore = parseNum(p.communityScore ?? p.community ?? p.community_score);
+  p.wealthScore = (p.wealthScore !== undefined && p.wealthScore !== null) ? parseNum(p.wealthScore, null) : null;
 
-  p.maxPrice = parseNum(
-      p.maxPrice ??
-      p.max_price ??
-      p.maxPriceInr ??
-      p.max_price_inr ??
-      p.price_max ??
-      p.price_max_inr ??
-      p.priceMax
-  );
-
-  // --- RENT YIELD ---
-  p.rentYieldPercent = parseNum(
-      p.rentYieldPercent ??
-      p.avgRentYield ??
-      p.rent_yield ??
-      p.rentYield ??
-      p.avg_rent_yield ??
-      p.rent_yield_percent ??
-      p.rentYieldPercentRaw
-  );
-
-  // --- SCORES ---
-  p.fundamentalsScore = parseNum(
-      p.fundamentalsScore ??
-      p.fundamentals ??
-      p.fundamentalScore ??
-      p.fundScore ??
-      p.fundamental_score
-  );
-
-  p.environmentalScore = parseNum(
-      p.environmentalScore ??
-      p.env ??
-      p.environment_score ??
-      p.environmental ??
-      p.envScore
-  );
-
-  p.locationScore = parseNum(
-      p.locationScore ??
-      p.location_score ??
-      p.location ??
-      p.locScore
-  );
-
-  p.personalScore = parseNum(
-      p.personalScore ??
-      p.personal_score ??
-      p.personal ??
-      p.personalScoreVal
-  );
-
-  p.builderReputationScore = parseNum(
-      p.builderReputationScore ??
-      p.builder_reputation_score ??
-      p.builder_score ??
-      p.builder ??
-      p.builderReputation
-  );
-
-  p.deliveryHistoryScore = parseNum(
-      p.deliveryHistoryScore ??
-      p.delivery_history_score ??
-      p.delivery_score ??
-      p.delivery ??
-      p.deliveryHistory
-  );
-
-  p.vacancyRiskScore = parseNum(
-      p.vacancyRiskScore ??
-      p.vacancy_risk_score ??
-      p.vacancy_score ??
-      p.vacancy ??
-      p.vacancyRisk
-  );
-
-  p.safetyIndex = parseNum(
-      p.safetyIndex ??
-      p.safety_score ??
-      p.safety ??
-      p.safetyIndexVal
-  );
-
-  p.communityScore = parseNum(
-      p.communityScore ??
-      p.community_profile_score ??
-      p.community_score ??
-      p.community ??
-      p.communityScoreVal
-  );
-
-  // DEMAND (unsold/total)
-  p.totalUnits = parseNum(
-      p.totalUnits ??
-      p.total_units ??
-      p.totalUnitsBuilt ??
-      p.unitsTotal ??
-      p.total ??
-      p.inventory_total
-  );
-
-  p.unsoldUnits = parseNum(
-      p.unsoldUnits ??
-      p.unsold ??
-      p.unsold_units ??
-      p.inventory ??
-      p.available_units
-  );
-
-  // --- DIRECT WEALTH SCORE FROM API ---
-  p.wealthScore = (() => {
-    const v = p.wealthScore ?? p.wealth_score ?? p.score ?? p.wealth ?? null;
-    return v === null || v === undefined ? null : parseNum(v, null);
-  })();
-
+  // keep raw strings for UI
   return p;
 }
 
-// helpers used by score calculation
+// small helpers
 const L = (v) => Math.max(0, Math.min(1, Number(v) || 0));
-function S10(v){ return L(Number(v) / 10); } // expects 0..10
+function S10(v){ return L(Number(v) / 10); }
 function invert10(v){ return L(1 - S10(v)); }
 function affordability(minPrice, maxPrice){
   const min = parseNum(minPrice, 0), max = parseNum(maxPrice, 0);
   const avg = (min && max) ? ((min + max)/2) : (max || min || 0);
   if(!avg) return 0.5;
-  const benchmark = 7500000; // tune for your market
+  const benchmark = 7500000;
   const ratio = avg / benchmark;
-  const val = 1 - Math.log10(Math.max(ratio, 0.01)); // guard ratio
+  const val = 1 - Math.log10(Math.max(ratio, 0.01));
   return L(val);
 }
 function rentYieldScore(y){
   const num = parseNum(y, 0);
-  return L(num / 8); // scale: 8% -> 1
+  return L(num / 8);
 }
 function demandScore(unsold, total){
   const u = parseNum(unsold, 0), t = parseNum(total, 0);
@@ -389,18 +218,16 @@ function computeWealthScoreP(raw){
   const fAff = affordability(minP, maxP);
   const fYield = rentYieldScore(safe(p.rentYieldPercent));
 
-  // defensive demand: if unsold > total, clamp unsold to total (so demand = 0 not negative)
-  const total = safe(p.totalUnits) || safe(p.total) || 0;
-  let unsold = safe(p.unsoldUnits) || safe(p.unsold) || 0;
+  // defensive demand: clamp unsold if > total
+  const total = safe(p.totalUnits) || 0;
+  let unsold = safe(p.unsoldUnits) || 0;
   if (total > 0 && unsold > total) {
-    // clamp and log
     unsold = total;
-    // small log so you can see it in diagnostics
-    saveLog(`Adjusted unsoldUnits -> ${unsold} because raw unsold > total (${raw.projectId||raw.id||'?'})`);
+    saveLog(`Adjusted unsoldUnits -> ${unsold} (clamped because raw unsold > total) for ${raw.projectId||raw.id||'?'}`);
   }
   const fDemand = demandScore(unsold, total);
 
-  // weights (kept similar)
+  // weights
   const w = {
     fundamentals:0.20, location:0.18, affordability:0.15, rentYield:0.10, builder:0.08, delivery:0.06,
     environmental:0.05, safety:0.05, vacancy:0.05, demand:0.04, personal:0.04
@@ -411,7 +238,7 @@ function computeWealthScoreP(raw){
     fBuilder*w.builder + fDelivery*w.delivery + fEnv*w.environmental + fSafety*w.safety +
     fVacancy*w.vacancy + fDemand*w.demand + fPers*w.personal;
 
-  // Add a clear debug line (components + final)
+  // Debug logging
   try{
     const components = {
       fFund: +fFund.toFixed(3),
@@ -425,18 +252,16 @@ function computeWealthScoreP(raw){
       fVacancy: +fVacancy.toFixed(3),
       fDemand: +fDemand.toFixed(3),
       fPers: +fPers.toFixed(3),
-      rawTotalUnits: total,
-      rawUnsold: unsold
+      totalUnits: total,
+      unsoldUnits: unsold
     };
     const rawId = raw.projectId || raw.id || 'unknown';
-    saveLog(`SCORES ${rawId}: ${JSON.stringify(components)} => rawScorePct=${(score*100).toFixed(2)}`);
-    // set a special status so you can spot scoring logs
+    saveLog(`SCORES ${rawId}: ${JSON.stringify(components)} => rawScorePct=${(Math.max(0, Math.min(1, score))*100).toFixed(2)}`);
     setStatus('scoring-debug');
   } catch(e){
     console.warn('scoring debug failed', e);
   }
 
-  // Make sure score is in 0..1 then scale to 0..100
   const pct = Math.round(Math.max(0, Math.min(1, score)) * 100);
   return pct;
 }
@@ -444,11 +269,9 @@ function computeWealthScoreP(raw){
 // wrapper to return 0..10 format like earlier
 function wealthToTen(rawProject){
   const pct = computeWealthScoreP(rawProject); // 0..100
-  // convert to two-decimal 0..10 (e.g. 17 => 1.70)
   const val10 = Math.round((pct/10) * 100) / 100;
   return Math.max(0, Math.min(10, val10));
 }
-
 
 // ---------- Render UI ----------
 function renderCards(arr){
@@ -459,13 +282,12 @@ function renderCards(arr){
   const status = $('statusFilter').value;
   const minScoreFilter = Number($('scoreFilter').value || 0);
 
-  const filtered = arr.filter(p=>{
+  const filtered = (arr||[]).filter(p=>{
     if(!p) return false;
     if(q && !(String(p.projectName||'').toLowerCase().includes(q) || String(p.microLocation||'').toLowerCase().includes(q))) return false;
-    if(zone && zone!=='All Zones' && (String(p.zone || p.region || '').trim() !== zone)) return false;
-    if(segment && segment!=='All Segments' && (String(p.segment || p.propertySegment || '').trim() !== segment)) return false;
-    // status not used in demo; keep hook
-    const s10 = Math.round((wealthToTen(p) * 10)); // 0..100
+    if(zone && zone!=='All Zones' && p.zone !== zone) return false;
+    if(segment && segment!=='All Segments' && p.segment !== segment) return false;
+    const s10 = Math.round((wealthToTen(p) * 10));
     if(minScoreFilter && s10 < minScoreFilter) return false;
     return true;
   });
@@ -474,7 +296,7 @@ function renderCards(arr){
 
   filtered.forEach(p=>{
     const card = document.createElement('article'); card.className='card';
-    const score10 = wealthToTen(p); // 0..10 with two decimals
+    const score10 = wealthToTen(p);
     const progPct = Math.round((score10/10)*100);
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -508,13 +330,13 @@ function renderCards(arr){
 }
 
 function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":"&#39;"}[c])); }
-function formatMoney(v){ if(v===null || v===undefined) return '—'; try { return '₹'+Number(v).toLocaleString(); } catch(e){ return '₹'+v; } }
+function formatMoney(v){ if(v===null||v===undefined) return '—'; try { return '₹'+Number(v).toLocaleString(); } catch(e){ return '₹'+v; } }
 
-// ---------- Actions ----------
+// actions
 function openLead(pid){ alert('Monitor lead for ' + pid); }
 function showDetails(pid){ alert('Open details for ' + pid); }
 
-// ---------- Load data ----------
+// load projects
 async function loadProjects(){
   setStatus('loading');
   const api = getApi();
@@ -522,7 +344,6 @@ async function loadProjects(){
     setStatus('demo');
     saveLog('Using demo sample projects');
     const demo = demoProjects();
-    window.lastLoaded = demo;
     renderCards(demo);
     return;
   }
@@ -531,56 +352,49 @@ async function loadProjects(){
     saveLog('GET ' + api + '?json=1');
     const res = await fetchWithTimeout(api + '?json=1', {}, 12000);
     const text = await res.text();
-    // attempt parse
     try{
       const data = JSON.parse(text);
       if(!Array.isArray(data)){
         saveLog('API returned non-array JSON; falling back to demo');
         setStatus('invalid-json');
-        const demo = demoProjects();
-        window.lastLoaded = demo;
-        renderCards(demo);
+        renderCards(demoProjects());
         return;
       }
-
-      // --- DEBUG: inspect first project raw + normalized + computed score ---
       saveLog('Loaded ' + data.length + ' projects from API');
       setStatus('ok');
-      if (Array.isArray(data) && data.length > 0) {
-        try {
-          saveLog('RAW[0]: ' + JSON.stringify(data[0]).slice(0,1000));
-          const norm = normalizeProject(data[0]);
-          saveLog('NORMALIZED[0]: ' + JSON.stringify(norm).slice(0,1000));
-          const pct = computeWealthScoreP(data[0]); // 0..100
-          const ten = wealthToTen(data[0]); // 0..10
-          saveLog(`COMPUTE[0]: pct=${pct}, ten=${ten.toFixed(2)}`);
-        } catch (dbgE) {
-          saveLog('DEBUG ERR: ' + dbgE);
-        }
-      }
-
-      window.lastLoaded = data;
       renderCards(data);
       return;
     } catch(e){
-      saveLog('JSON parse error: ' + e + '\\nResponse snippet: ' + text.slice(0,400));
+      saveLog('JSON parse error: ' + e + '\\nResponse snippet: ' + (text||'').slice(0,400));
       setStatus('parse-error');
-      const demo = demoProjects();
-      window.lastLoaded = demo;
-      renderCards(demo);
+      renderCards(demoProjects());
       return;
     }
   } catch(e){
     saveLog('Fetch error: ' + String(e));
     setStatus('error');
-    const demo = demoProjects();
-    window.lastLoaded = demo;
-    renderCards(demo);
+    renderCards(demoProjects());
     return;
   }
 }
 
-// ---------- Init UI ----------
+// demo sample (keeps UI populated if API unreachable)
+function demoProjects(){
+  return [
+    {
+      projectId:'P001', projectName:'Skyline Aurelia', microLocation:'Kondapur', zone:'North',
+      minPrice:7600000, maxPrice:9800000, rentYieldPercent:2.85, totalUnits:181, unsoldUnits:20,
+      fundamentalsScore:6, locationScore:6, builderReputationScore:6, safetyIndex:5
+    },
+    {
+      projectId:'P002', projectName:'Cypress Urban Retreat', microLocation:'Uppal', zone:'North',
+      minPrice:12800000, maxPrice:19800000, rentYieldPercent:2.09, totalUnits:280, unsoldUnits:70,
+      fundamentalsScore:5, locationScore:5, builderReputationScore:4, safetyIndex:4
+    }
+  ];
+}
+
+// init UI
 $('apiUrl').value = getApi();
 $('saveBtn').addEventListener('click', ()=>{
   const v = $('apiUrl').value.trim();
@@ -600,17 +414,14 @@ async function loadProjectsFromCache(){
   }
 }
 
-// store lastLoaded when rendering
+// override to capture lastLoaded
 const origRenderCards = renderCards;
 renderCards = function(arr){
   lastLoaded = arr;
-  window.lastLoaded = arr;
   origRenderCards(arr);
 };
 
-(function init(){
-  loadProjects();
-})();
+(function init(){ loadProjects(); })();
 </script>
 </body>
 </html>
