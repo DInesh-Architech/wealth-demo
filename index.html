@@ -190,44 +190,60 @@ function demandScore(unsold, total){
   return L(1 - ratio);
 }
 
-// ---------- compute wealth score (patched) ----------
+// ---------- compute wealth score (use API demand/yield fallbacks) ----------
 function computeWealthScoreP(raw){
   const p = normalizeProject(raw);
 
-  // if API supplied final wealthScore, use that first (0..100 or 0..10)
+  // use API-provided wealth directly if present
   if (p.wealthScore !== null && p.wealthScore !== undefined) {
     const v = Number(p.wealthScore) || 0;
-    if (v <= 10) return Math.round(L(v/10) * 100); // convert 0..10 to 0..100
+    if (v <= 10) return Math.round(L(v/10) * 100);
     return Math.round(L(v/100) * 100);
   }
 
-  // defensive coercion
+  // helpers
   const safe = x => (typeof x === 'number' ? x : parseFloat(x) || 0);
+  function rentYieldFallback(){
+    if(p.rentYieldPercent) return safe(p.rentYieldPercent);
+    // try avgRent2BHK and avgRent3BHK to derive yield using pricePerSqft & typical sizes is hard;
+    // fallback: if avgRent2BHK & avgRent3BHK exist, average and estimate yield using minPrice avg
+    const r2 = safe(raw.avgRent2BHK || raw.avgRent2BHK || 0);
+    const r3 = safe(raw.avgRent3BHK || 0);
+    const avgRent = (r2 && r3) ? ((r2 + r3)/2) : (r2 || r3 || 0);
+    if(!avgRent) return 0;
+    // crude estimate: assume annual rent = avgRent*12 for a 2B/3B; compare to average price
+    const avgPrice = (safe(p.minPrice) + safe(p.maxPrice)) / ( (safe(p.minPrice) && safe(p.maxPrice)) ? 2 : 1 );
+    if(!avgPrice) return 0;
+    const yieldPct = (avgRent * 12) / avgPrice * 100;
+    return yieldPct;
+  }
 
+  // compute components
   const fFund = S10(safe(p.fundamentalsScore));
-  const fEnv = S10(safe(p.environmentalScore));
-  const fLoc = S10(safe(p.locationScore));
-  const fPers = S10(safe(p.personalScore));
+  const fLoc  = S10(safe(p.locationScore));
   const fBuilder = S10(safe(p.builderReputationScore));
   const fDelivery = S10(safe(p.deliveryHistoryScore));
-  const fVacancy = invert10(safe(p.vacancyRiskScore));
+  const fEnv = S10(safe(p.environmentalScore));
   const fSafety = S10(safe(p.safetyIndex));
-  const fCommunity = S10(safe(p.communityScore));
+  const fPers = S10(safe(p.personalScore));
+  const fVacancy = invert10(safe(p.vacancyRiskScore));
 
-  const minP = safe(p.minPrice), maxP = safe(p.maxPrice);
-  const fAff = affordability(minP, maxP);
-  const fYield = rentYieldScore(safe(p.rentYieldPercent));
+  const fAff = affordability(safe(p.minPrice), safe(p.maxPrice));
+  const rawYield = rentYieldFallback();
+  const fYield = rentYieldScore(rawYield);
 
-  // defensive demand: clamp unsold if > total
-  const total = safe(p.totalUnits) || 0;
-  let unsold = safe(p.unsoldUnits) || 0;
-  if (total > 0 && unsold > total) {
-    unsold = total;
-    saveLog(`Adjusted unsoldUnits -> ${unsold} (clamped because raw unsold > total) for ${raw.projectId||raw.id||'?'}`);
+  // demand: prefer rentalDemandScore if present (scale 0..10 assumed), else unsold/total
+  let fDemand = 0.5;
+  if(raw.rentalDemandScore !== undefined && raw.rentalDemandScore !== null){
+    fDemand = L(safe(raw.rentalDemandScore)/10);
+  } else {
+    // clamp unsold to total
+    const total = safe(p.totalUnits);
+    let unsold = safe(p.unsoldUnits);
+    if(total > 0 && unsold > total) unsold = total;
+    fDemand = demandScore(unsold, total);
   }
-  const fDemand = demandScore(unsold, total);
 
-  // weights
   const w = {
     fundamentals:0.20, location:0.18, affordability:0.15, rentYield:0.10, builder:0.08, delivery:0.06,
     environmental:0.05, safety:0.05, vacancy:0.05, demand:0.04, personal:0.04
@@ -238,33 +254,22 @@ function computeWealthScoreP(raw){
     fBuilder*w.builder + fDelivery*w.delivery + fEnv*w.environmental + fSafety*w.safety +
     fVacancy*w.vacancy + fDemand*w.demand + fPers*w.personal;
 
-  // Debug logging
+  // debug snapshot to diag
   try{
-    const components = {
-      fFund: +fFund.toFixed(3),
-      fLoc: +fLoc.toFixed(3),
-      fAff: +fAff.toFixed(3),
-      fYield: +fYield.toFixed(3),
-      fBuilder: +fBuilder.toFixed(3),
-      fDelivery: +fDelivery.toFixed(3),
-      fEnv: +fEnv.toFixed(3),
-      fSafety: +fSafety.toFixed(3),
-      fVacancy: +fVacancy.toFixed(3),
-      fDemand: +fDemand.toFixed(3),
-      fPers: +fPers.toFixed(3),
-      totalUnits: total,
-      unsoldUnits: unsold
-    };
     const rawId = raw.projectId || raw.id || 'unknown';
-    saveLog(`SCORES ${rawId}: ${JSON.stringify(components)} => rawScorePct=${(Math.max(0, Math.min(1, score))*100).toFixed(2)}`);
+    saveLog(`SCORES ${rawId}: aff=${fAff.toFixed(3)},yield=${fYield.toFixed(3)},demand=${fDemand.toFixed(3)},safety=${fSafety.toFixed(3)} => rawScorePct=${(Math.max(0,Math.min(1,score))*100).toFixed(2)}`);
     setStatus('scoring-debug');
-  } catch(e){
-    console.warn('scoring debug failed', e);
-  }
+  } catch(e){}
 
-  const pct = Math.round(Math.max(0, Math.min(1, score)) * 100);
-  return pct;
+  return Math.round(Math.max(0,Math.min(1,score)) * 100);
 }
+
+// wrapper
+function wealthToTen(rawProject){
+  const pct = computeWealthScoreP(rawProject);
+  return Math.max(0, Math.min(10, Math.round((pct/10) * 100) / 100));
+}
+
 
 // wrapper to return 0..10 format like earlier
 function wealthToTen(rawProject){
