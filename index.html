@@ -138,27 +138,79 @@ async function fetchWithTimeout(url, opts={}, timeout=12000){
   }
 }
 
-// ---------- Wealth score engine (same logic) ----------
-const N = (v, f=0) => (v===null||v===undefined||isNaN(v)) ? f : Number(v);
-const L = (v) => Math.max(0, Math.min(1, v));
-const S10 = (v) => L(N(v)/10);
-const invert10 = (v) => L(1 - S10(v));
+// ---------- Normalizers + safer parsing ----------
+function parseNum(v, fallback = 0) {
+  if (v === null || v === undefined || v === '') return fallback;
+  if (typeof v === 'number' && !isNaN(v)) return v;
+  // remove currency symbols, commas, spaces, percent signs, etc
+  const s = String(v).replace(/[,₹\s%]+/g, '').replace(/[^\d\.\-]/g, '');
+  const n = Number(s);
+  return isNaN(n) ? fallback : n;
+}
+
+// normalize common alternative field names to our expected names
+function normalizeProject(pRaw){
+  const p = Object.assign({}, pRaw); // shallow copy
+  // price fields: many APIs use min_price or minPrice or priceMin
+  p.minPrice = parseNum(p.minPrice ?? p.min_price ?? p.min_price_rupee ?? p.minPriceInr ?? p.min_price_inr);
+  p.maxPrice = parseNum(p.maxPrice ?? p.max_price ?? p.maxPriceInr ?? p.max_price_inr);
+  // rent yield might be rentYieldPercent or rent_yield or avgRentYield
+  p.rentYieldPercent = parseNum(p.rentYieldPercent ?? p.rent_yield ?? p.avgRentYield ?? p.avg_rent_yield);
+  // units
+  p.totalUnits = parseNum(p.totalUnits ?? p.total_units ?? p.totalUnitsBuilt ?? p.total_units_all, 0);
+  p.unsoldUnits = parseNum(p.unsoldUnits ?? p.unsold_units ?? p.unsold, 0);
+  // scores - try multiple names
+  p.fundamentalsScore = parseNum(p.fundamentalsScore ?? p.fundamentalScore ?? p.fundamentals_score ?? p.fundScore, 0);
+  p.environmentalScore = parseNum(p.environmentalScore ?? p.environmental_score ?? p.envScore, 0);
+  p.locationScore = parseNum(p.locationScore ?? p.location_score ?? p.location_score_km ?? p.locScore, 0);
+  p.personalScore = parseNum(p.personalScore ?? p.personal_score ?? p.personalScoreVal, 0);
+  p.builderReputationScore = parseNum(p.builderReputationScore ?? p.builderReputation ?? p.builder_reputation_score ?? p.builder_score, 0);
+  p.deliveryHistoryScore = parseNum(p.deliveryHistoryScore ?? p.delivery_history_score ?? p.delivery_score, 0);
+  p.vacancyRiskScore = parseNum(p.vacancyRiskScore ?? p.vacancy_risk_score ?? p.vacancy_score, 0);
+  p.safetyIndex = parseNum(p.safetyIndex ?? p.safety_index ?? p.safetyScore, 0);
+  p.communityScore = parseNum(p.communityScore ?? p.community_profile_score ?? p.community_score, 0);
+
+  // if the API directly provides a final wealthScore field, parse it too
+  p.wealthScore = parseNum(p.wealthScore ?? p.wealth_score, null);
+
+  return p;
+}
+
+// helpers used by score calculation
+const L = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+function S10(v){ return L(Number(v) / 10); }
+function invert10(v){ return L(1 - S10(v)); }
 function affordability(minPrice, maxPrice){
-  const avg = (N(minPrice,0) + N(maxPrice,0)) / (N(minPrice,0) && N(maxPrice,0) ? 2 : 1);
+  const min = parseNum(minPrice, 0), max = parseNum(maxPrice, 0);
+  const avg = (min && max) ? ((min + max)/2) : (max || min || 0);
   if(!avg) return 0.5;
-  const benchmark = 7500000;
+  const benchmark = 7500000; // tune for your market
   const ratio = avg / benchmark;
-  const val = 1 - Math.log10(ratio>0 ? ratio : 1);
+  const val = 1 - Math.log10(Math.max(ratio, 0.01)); // guard ratio
   return L(val);
 }
-const rentYieldScore = (yieldPercent) => L(N(yieldPercent)/8);
+function rentYieldScore(y){
+  const num = parseNum(y, 0);
+  return L(num / 8); // same scale as before
+}
 function demandScore(unsold, total){
-  if(!N(total)) return 0.5;
-  const ratio = N(unsold)/N(total);
+  const u = parseNum(unsold, 0), t = parseNum(total, 0);
+  if(!t) return 0.5;
+  const ratio = u / t;
   return L(1 - ratio);
 }
 
-function computeWealthScoreP(p){
+// compute wealth score from normalized project object
+function computeWealthScoreP(raw){
+  const p = normalizeProject(raw);
+  // if API supplied final wealthScore, use that first (0..100)
+  if (p.wealthScore !== null && p.wealthScore !== undefined) {
+    // If API returned raw 0..10, scale to 0..100 if likely
+    const v = p.wealthScore;
+    if (v <= 10) return Math.round(L(v/10) * 100); // convert 0..10 to 0..100
+    return Math.round(L(v/100) * 100);
+  }
+
   const fFund = S10(p.fundamentalsScore);
   const fEnv = S10(p.environmentalScore);
   const fLoc = S10(p.locationScore);
@@ -167,12 +219,13 @@ function computeWealthScoreP(p){
   const fDelivery = S10(p.deliveryHistoryScore);
   const fVacancy = invert10(p.vacancyRiskScore);
   const fSafety = S10(p.safetyIndex);
-  const fCommunity = S10(p.communityScore||p.communityProfileScore);
+  const fCommunity = S10(p.communityScore);
 
   const fAff = affordability(p.minPrice, p.maxPrice);
   const fYield = rentYieldScore(p.rentYieldPercent);
   const fDemand = demandScore(p.unsoldUnits, p.totalUnits);
 
+  // weights (kept similar)
   const w = {
     fundamentals:0.20, location:0.18, affordability:0.15, rentYield:0.10, builder:0.08, delivery:0.06,
     environmental:0.05, safety:0.05, vacancy:0.05, demand:0.04, personal:0.04
@@ -183,37 +236,33 @@ function computeWealthScoreP(p){
     fBuilder*w.builder + fDelivery*w.delivery + fEnv*w.environmental + fSafety*w.safety +
     fVacancy*w.vacancy + fDemand*w.demand + fPers*w.personal;
 
-  return Math.round(L(score)*100);
+  // Debug logging for first project only (visible in diagnostics)
+  try{
+    if(window && window.lastLoaded && Array.isArray(window.lastLoaded) && window.lastLoaded[0] && (window.lastLoaded[0].projectId === (raw.projectId || raw.id || window.lastLoaded[0].projectId))) {
+      const dbg = [
+        `WEALTH DEBUG for projectId=${raw.projectId || raw.id || 'unknown'}`,
+        `minPrice=${p.minPrice},maxPrice=${p.maxPrice},rentYield=${p.rentYieldPercent}`,
+        `fundamentals:${p.fundamentalsScore}->${fFund.toFixed(3)}`,
+        `location:${p.locationScore}->${fLoc.toFixed(3)}`,
+        `afford:${fAff.toFixed(3)},rentYield:${fYield.toFixed(3)},demand:${fDemand.toFixed(3)}`,
+        `builder:${p.builderReputationScore}->${fBuilder.toFixed(3)},delivery:${fDelivery.toFixed(3)},vacancy:${p.vacancyRiskScore}->${fVacancy.toFixed(3)}`,
+        `rawScorePct:${(score*100).toFixed(2)}`
+      ].join('\\n');
+      setStatus('scoring-debug');
+      saveLog(dbg);
+    }
+  }catch(e){ console.warn('debug log failed', e); }
+
+  return Math.round(L(score) * 100);
 }
 
-// wrapper returns 0..10 with two decimals for UI like "6.52/10"
-function wealthToTen(p){
-  const raw = (p.wealthScore !== undefined && p.wealthScore !== null) ? Number(p.wealthScore) : computeWealthScoreP(p);
-  const pct = (!isNaN(raw) && raw>1 && raw<=100) ? Number(raw) : (raw>0 && raw<=1 ? raw*100 : raw);
-  const score = Math.round((pct/10) * 100) / 100; // x.xx scale 0..10
-  return Math.max(0, Math.min(10, score));
+// wrapper to return 0..10 format like earlier
+function wealthToTen(rawProject){
+  const pct = computeWealthScoreP(rawProject); // 0..100
+  const val10 = Math.round((pct/10) * 100) / 100;
+  return Math.max(0, Math.min(10, val10));
 }
 
-// ---------- Demo sample data (10 items) ----------
-function demoProjects(){
-  const names = ['Vertex Ameerpet','Prestige Kollur','Ramky Uppal','Palm Grove Habitat','Crystal Avenue','Nova Crest','CityEdge Towers','GreenHills Enclave','Hitech Serenity Homes','Skyline Aurelia'];
-  return names.map((n,i)=>{
-    const min = 7000000 + i*600000;
-    const max = min + 8000000;
-    return {
-      projectId: 'P' + String(100+i),
-      projectName: n,
-      microLocation: ['Ameerpet','Kollur','Uppal','Uppal South','Pocharam','LB Nagar','Bowrampet','Attapur','Bachupally','Kondapur'][i],
-      zone: ['Central','West','East','South','West','West','Central','West','West','North'][i],
-      segment: ['Premium','Luxury','Mid','Affordable','Mid','Premium','Premium','Affordable','Premium','Premium'][i],
-      minPrice: min, maxPrice: max,
-      rentYieldPercent: (2.5 + i*0.3).toFixed(2),
-      unsoldUnits: Math.floor(30 - i*2), totalUnits: 200 + i*10,
-      fundamentalsScore: 6 + (i%4), environmentalScore: 5 + (i%3), locationScore: 6 + (i%3),
-      personalScore: 5, builderReputationScore: 6, deliveryHistoryScore: 6, vacancyRiskScore: 4, safetyIndex: 7, communityScore: 6
-    };
-  });
-}
 
 // ---------- Render UI ----------
 function renderCards(arr){
