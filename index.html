@@ -48,7 +48,7 @@
   .diag{position:fixed;right:18px;bottom:18px;background:#fff;padding:12px;border-radius:10px;box-shadow:0 10px 30px rgba(12,18,26,0.12);width:360px;z-index:60}
   .diag h4{margin:0 0 8px 0;font-size:14px}
   .diag input{width:100%;padding:8px;border-radius:8px;border:1px solid #e6efe9;margin-bottom:8px}
-  .diag .log{background:#0b1220;color:#fff;padding:8px;border-radius:6px;font-family:monospace;font-size:12px;max-height:120px;overflow:auto}
+  .diag .log{background:#0b1220;color:#fff;padding:8px;border-radius:6px;font-family:monospace;font-size:12px;max-height:160px;overflow:auto}
   @media(max-width:900px){
     .hero h2{font-size:32px}
     .grid{grid-template-columns:1fr}
@@ -111,16 +111,19 @@
   </div>
 
 <script>
-/* DATA + API + FRONTEND LOGIC
-   - Set the API in the diagnostics box (stored to localStorage)
-   - If API present it will GET ?json=1 and expect an array of projects
-   - If no API or fetch fails, demo sample data is used so the UI looks like the screenshot
-   - Wealth score engine is included and displayed as X.XX/10
+/* Full index.html — patched version
+   - robust normalizeProject mapping
+   - demo fallback data
+   - diagnostic logging and debug of first project
 */
 
 // ---------- Utilities ----------
 const $ = id => document.getElementById(id);
-function saveLog(text){ const l = $('diagLog'); l.textContent = (text + '\\n') + l.textContent; }
+function saveLog(text){
+  const l = $('diagLog');
+  const ts = new Date().toISOString().replace('T',' ').slice(0,19);
+  l.textContent = `[${ts}] ${text}\n` + l.textContent;
+}
 function setStatus(s){ $('diagStatus').textContent = s; }
 function getApi(){ return localStorage.getItem('WEALTH_API_URL') || ''; }
 function setApi(v){ if(!v) localStorage.removeItem('WEALTH_API_URL'); else localStorage.setItem('WEALTH_API_URL', v); }
@@ -138,89 +141,173 @@ async function fetchWithTimeout(url, opts={}, timeout=12000){
   }
 }
 
+// ---------- Demo sample projects (fallback) ----------
+function demoProjects(){
+  return [
+    {
+      projectId: "P001",
+      projectName: "Skyline Aurelia",
+      microLocation: "Kondapur",
+      zone: "North",
+      min_price: "7600000",
+      max_price: "9800000",
+      avgRentYield: "2.85",
+      fundamentals: 6,
+      location: 6,
+      builder: 6,
+      delivery: 6,
+      vacancy: 5,
+      safety: 6,
+      community: 6,
+      total: 200,
+      unsold: 20
+    },
+    {
+      projectId: "P002",
+      projectName: "Cypress Urban Retreat",
+      microLocation: "Uppal",
+      zone: "North",
+      min_price: "12800000",
+      max_price: "19800000",
+      avgRentYield: "2.09",
+      fundamentals: 7,
+      location: 6,
+      builder: 6,
+      delivery: 5,
+      vacancy: 6,
+      safety: 6,
+      community: 7,
+      total: 150,
+      unsold: 5
+    },
+    // more demo items to fill the page visually
+    {
+      projectId: "P003", projectName: "Eden Park Residences", microLocation: "Madhapur", zone: "East",
+      min_price: "6300000", max_price: "20300000", avgRentYield: "5.42",
+      fundamentals: 6, location:6, builder:6, delivery:5, vacancy:5, safety:6, community:5, total:120, unsold:12
+    },
+    {
+      projectId: "P004", projectName: "Astra Nova", microLocation: "Bowrampet", zone: "East",
+      min_price: "12300000", max_price: "24700000", avgRentYield: "3.6",
+      fundamentals: 6, location:5, builder:6, delivery:7, vacancy:6, safety:5, community:6, total:220, unsold:22
+    }
+  ];
+}
+
 // ---------- Normalizers + safer parsing ----------
 function parseNum(v, fallback = 0) {
   if (v === null || v === undefined || v === '') return fallback;
   if (typeof v === 'number' && !isNaN(v)) return v;
   // remove currency symbols, commas, spaces, percent signs, etc
-  const s = String(v).replace(/[,₹\s%]+/g, '').replace(/[^\d\.\-]/g, '');
+  const s = String(v).replace(/[,\s₹]+/g, '').replace(/%/g, '').replace(/[^\d\.\-]/g, '');
   const n = Number(s);
   return isNaN(n) ? fallback : n;
 }
 
 // normalize common alternative field names to our expected names
 function normalizeProject(pRaw){
-  const p = Object.assign({}, pRaw);
+  const p = Object.assign({}, pRaw); // shallow copy
 
   // --- PRICE ---
   p.minPrice = parseNum(
       p.minPrice ??
       p.min_price ??
       p.minPriceInr ??
-      p.min_price_inr
+      p.min_price_inr ??
+      p.price_min ??
+      p.price_min_inr ??
+      p.priceMin
   );
 
   p.maxPrice = parseNum(
       p.maxPrice ??
       p.max_price ??
       p.maxPriceInr ??
-      p.max_price_inr
+      p.max_price_inr ??
+      p.price_max ??
+      p.price_max_inr ??
+      p.priceMax
   );
 
   // --- RENT YIELD ---
   p.rentYieldPercent = parseNum(
       p.rentYieldPercent ??
       p.avgRentYield ??
-      p.rent_yield
+      p.rent_yield ??
+      p.rentYield ??
+      p.avg_rent_yield ??
+      p.rent_yield_percent ??
+      p.rentYieldPercentRaw
   );
 
-  // --- SCORES (Mappings based on your emergent preview site) ---
+  // --- SCORES ---
   p.fundamentalsScore = parseNum(
       p.fundamentalsScore ??
       p.fundamentals ??
-      p.fundamentalScore
+      p.fundamentalScore ??
+      p.fundScore ??
+      p.fundamental_score
   );
 
   p.environmentalScore = parseNum(
       p.environmentalScore ??
       p.env ??
-      p.environment_score
+      p.environment_score ??
+      p.environmental ??
+      p.envScore
   );
 
   p.locationScore = parseNum(
       p.locationScore ??
+      p.location_score ??
       p.location ??
-      p.location_score
+      p.locScore
+  );
+
+  p.personalScore = parseNum(
+      p.personalScore ??
+      p.personal_score ??
+      p.personal ??
+      p.personalScoreVal
   );
 
   p.builderReputationScore = parseNum(
       p.builderReputationScore ??
+      p.builder_reputation_score ??
+      p.builder_score ??
       p.builder ??
-      p.builder_score
+      p.builderReputation
   );
 
   p.deliveryHistoryScore = parseNum(
       p.deliveryHistoryScore ??
+      p.delivery_history_score ??
+      p.delivery_score ??
       p.delivery ??
-      p.delivery_score
+      p.deliveryHistory
   );
 
   p.vacancyRiskScore = parseNum(
       p.vacancyRiskScore ??
+      p.vacancy_risk_score ??
+      p.vacancy_score ??
       p.vacancy ??
-      p.vacancy_risk_score
+      p.vacancyRisk
   );
 
   p.safetyIndex = parseNum(
       p.safetyIndex ??
+      p.safety_score ??
       p.safety ??
-      p.safety_score
+      p.safetyIndexVal
   );
 
   p.communityScore = parseNum(
       p.communityScore ??
+      p.community_profile_score ??
+      p.community_score ??
       p.community ??
-      p.community_score
+      p.communityScoreVal
   );
 
   // DEMAND (unsold/total)
@@ -229,30 +316,30 @@ function normalizeProject(pRaw){
       p.total_units ??
       p.totalUnitsBuilt ??
       p.unitsTotal ??
-      p.total
+      p.total ??
+      p.inventory_total
   );
 
   p.unsoldUnits = parseNum(
       p.unsoldUnits ??
       p.unsold ??
       p.unsold_units ??
-      p.inventory
+      p.inventory ??
+      p.available_units
   );
 
   // --- DIRECT WEALTH SCORE FROM API ---
-  p.wealthScore = parseNum(
-      p.wealthScore ??
-      p.wealth_score ??
-      null
-  );
+  p.wealthScore = (() => {
+    const v = p.wealthScore ?? p.wealth_score ?? p.score ?? p.wealth ?? null;
+    return v === null || v === undefined ? null : parseNum(v, null);
+  })();
 
   return p;
 }
 
-
 // helpers used by score calculation
 const L = (v) => Math.max(0, Math.min(1, Number(v) || 0));
-function S10(v){ return L(Number(v) / 10); }
+function S10(v){ return L(Number(v) / 10); } // expects 0..10
 function invert10(v){ return L(1 - S10(v)); }
 function affordability(minPrice, maxPrice){
   const min = parseNum(minPrice, 0), max = parseNum(maxPrice, 0);
@@ -265,7 +352,7 @@ function affordability(minPrice, maxPrice){
 }
 function rentYieldScore(y){
   const num = parseNum(y, 0);
-  return L(num / 8); // same scale as before
+  return L(num / 8); // scale: 8% -> 1
 }
 function demandScore(unsold, total){
   const u = parseNum(unsold, 0), t = parseNum(total, 0);
@@ -277,9 +364,8 @@ function demandScore(unsold, total){
 // compute wealth score from normalized project object
 function computeWealthScoreP(raw){
   const p = normalizeProject(raw);
-  // if API supplied final wealthScore, use that first (0..100)
+  // if API supplied final wealthScore, use that first (0..100 or 0..10)
   if (p.wealthScore !== null && p.wealthScore !== undefined) {
-    // If API returned raw 0..10, scale to 0..100 if likely
     const v = p.wealthScore;
     if (v <= 10) return Math.round(L(v/10) * 100); // convert 0..10 to 0..100
     return Math.round(L(v/100) * 100);
@@ -299,7 +385,7 @@ function computeWealthScoreP(raw){
   const fYield = rentYieldScore(p.rentYieldPercent);
   const fDemand = demandScore(p.unsoldUnits, p.totalUnits);
 
-  // weights (kept similar)
+  // weights
   const w = {
     fundamentals:0.20, location:0.18, affordability:0.15, rentYield:0.10, builder:0.08, delivery:0.06,
     environmental:0.05, safety:0.05, vacancy:0.05, demand:0.04, personal:0.04
@@ -310,7 +396,7 @@ function computeWealthScoreP(raw){
     fBuilder*w.builder + fDelivery*w.delivery + fEnv*w.environmental + fSafety*w.safety +
     fVacancy*w.vacancy + fDemand*w.demand + fPers*w.personal;
 
-  // Debug logging for first project only (visible in diagnostics)
+  // Debug logging for the first loaded project (only)
   try{
     if(window && window.lastLoaded && Array.isArray(window.lastLoaded) && window.lastLoaded[0] && (window.lastLoaded[0].projectId === (raw.projectId || raw.id || window.lastLoaded[0].projectId))) {
       const dbg = [
@@ -337,7 +423,6 @@ function wealthToTen(rawProject){
   return Math.max(0, Math.min(10, val10));
 }
 
-
 // ---------- Render UI ----------
 function renderCards(arr){
   const container = $('cards'); container.innerHTML = '';
@@ -350,8 +435,8 @@ function renderCards(arr){
   const filtered = arr.filter(p=>{
     if(!p) return false;
     if(q && !(String(p.projectName||'').toLowerCase().includes(q) || String(p.microLocation||'').toLowerCase().includes(q))) return false;
-    if(zone && zone!=='All Zones' && p.zone !== zone) return false;
-    if(segment && segment!=='All Segments' && p.segment !== segment) return false;
+    if(zone && zone!=='All Zones' && (String(p.zone || p.region || '').trim() !== zone)) return false;
+    if(segment && segment!=='All Segments' && (String(p.segment || p.propertySegment || '').trim() !== segment)) return false;
     // status not used in demo; keep hook
     const s10 = Math.round((wealthToTen(p) * 10)); // 0..100
     if(minScoreFilter && s10 < minScoreFilter) return false;
@@ -363,7 +448,6 @@ function renderCards(arr){
   filtered.forEach(p=>{
     const card = document.createElement('article'); card.className='card';
     const score10 = wealthToTen(p); // 0..10 with two decimals
-    // progress percent for bar = score10 * 10 %
     const progPct = Math.round((score10/10)*100);
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -397,7 +481,7 @@ function renderCards(arr){
 }
 
 function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":"&#39;"}[c])); }
-function formatMoney(v){ if(!v && v!==0) return '—'; try { return '₹'+Number(v).toLocaleString(); } catch(e){ return '₹'+v; } }
+function formatMoney(v){ if(v===null || v===undefined) return '—'; try { return '₹'+Number(v).toLocaleString(); } catch(e){ return '₹'+v; } }
 
 // ---------- Actions ----------
 function openLead(pid){ alert('Monitor lead for ' + pid); }
@@ -407,10 +491,11 @@ function showDetails(pid){ alert('Open details for ' + pid); }
 async function loadProjects(){
   setStatus('loading');
   const api = getApi();
-  if(!api){ // fallback demo
+  if(!api){
     setStatus('demo');
     saveLog('Using demo sample projects');
     const demo = demoProjects();
+    window.lastLoaded = demo;
     renderCards(demo);
     return;
   }
@@ -425,23 +510,45 @@ async function loadProjects(){
       if(!Array.isArray(data)){
         saveLog('API returned non-array JSON; falling back to demo');
         setStatus('invalid-json');
-        renderCards(demoProjects());
+        const demo = demoProjects();
+        window.lastLoaded = demo;
+        renderCards(demo);
         return;
       }
+
+      // --- DEBUG: inspect first project raw + normalized + computed score ---
       saveLog('Loaded ' + data.length + ' projects from API');
       setStatus('ok');
+      if (Array.isArray(data) && data.length > 0) {
+        try {
+          saveLog('RAW[0]: ' + JSON.stringify(data[0]).slice(0,1000));
+          const norm = normalizeProject(data[0]);
+          saveLog('NORMALIZED[0]: ' + JSON.stringify(norm).slice(0,1000));
+          const pct = computeWealthScoreP(data[0]); // 0..100
+          const ten = wealthToTen(data[0]); // 0..10
+          saveLog(`COMPUTE[0]: pct=${pct}, ten=${ten.toFixed(2)}`);
+        } catch (dbgE) {
+          saveLog('DEBUG ERR: ' + dbgE);
+        }
+      }
+
+      window.lastLoaded = data;
       renderCards(data);
       return;
     } catch(e){
       saveLog('JSON parse error: ' + e + '\\nResponse snippet: ' + text.slice(0,400));
       setStatus('parse-error');
-      renderCards(demoProjects());
+      const demo = demoProjects();
+      window.lastLoaded = demo;
+      renderCards(demo);
       return;
     }
   } catch(e){
     saveLog('Fetch error: ' + String(e));
     setStatus('error');
-    renderCards(demoProjects());
+    const demo = demoProjects();
+    window.lastLoaded = demo;
+    renderCards(demo);
     return;
   }
 }
@@ -459,7 +566,6 @@ $('searchInput').addEventListener('input', ()=> loadProjectsFromCache());
 
 let lastLoaded = null;
 async function loadProjectsFromCache(){
-  // If an API was used earlier, we should fetch again; for performance we keep lastLoaded if exists and filter it
   if(lastLoaded && Array.isArray(lastLoaded) && lastLoaded.length) {
     renderCards(lastLoaded);
   } else {
@@ -467,10 +573,11 @@ async function loadProjectsFromCache(){
   }
 }
 
-// override to store lastLoaded when API returns
+// store lastLoaded when rendering
 const origRenderCards = renderCards;
 renderCards = function(arr){
   lastLoaded = arr;
+  window.lastLoaded = arr;
   origRenderCards(arr);
 };
 
