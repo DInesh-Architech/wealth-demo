@@ -150,31 +150,105 @@ function parseNum(v, fallback = 0) {
 
 // normalize common alternative field names to our expected names
 function normalizeProject(pRaw){
-  const p = Object.assign({}, pRaw); // shallow copy
-  // price fields: many APIs use min_price or minPrice or priceMin
-  p.minPrice = parseNum(p.minPrice ?? p.min_price ?? p.min_price_rupee ?? p.minPriceInr ?? p.min_price_inr);
-  p.maxPrice = parseNum(p.maxPrice ?? p.max_price ?? p.maxPriceInr ?? p.max_price_inr);
-  // rent yield might be rentYieldPercent or rent_yield or avgRentYield
-  p.rentYieldPercent = parseNum(p.rentYieldPercent ?? p.rent_yield ?? p.avgRentYield ?? p.avg_rent_yield);
-  // units
-  p.totalUnits = parseNum(p.totalUnits ?? p.total_units ?? p.totalUnitsBuilt ?? p.total_units_all, 0);
-  p.unsoldUnits = parseNum(p.unsoldUnits ?? p.unsold_units ?? p.unsold, 0);
-  // scores - try multiple names
-  p.fundamentalsScore = parseNum(p.fundamentalsScore ?? p.fundamentalScore ?? p.fundamentals_score ?? p.fundScore, 0);
-  p.environmentalScore = parseNum(p.environmentalScore ?? p.environmental_score ?? p.envScore, 0);
-  p.locationScore = parseNum(p.locationScore ?? p.location_score ?? p.location_score_km ?? p.locScore, 0);
-  p.personalScore = parseNum(p.personalScore ?? p.personal_score ?? p.personalScoreVal, 0);
-  p.builderReputationScore = parseNum(p.builderReputationScore ?? p.builderReputation ?? p.builder_reputation_score ?? p.builder_score, 0);
-  p.deliveryHistoryScore = parseNum(p.deliveryHistoryScore ?? p.delivery_history_score ?? p.delivery_score, 0);
-  p.vacancyRiskScore = parseNum(p.vacancyRiskScore ?? p.vacancy_risk_score ?? p.vacancy_score, 0);
-  p.safetyIndex = parseNum(p.safetyIndex ?? p.safety_index ?? p.safetyScore, 0);
-  p.communityScore = parseNum(p.communityScore ?? p.community_profile_score ?? p.community_score, 0);
+  const p = Object.assign({}, pRaw);
 
-  // if the API directly provides a final wealthScore field, parse it too
-  p.wealthScore = parseNum(p.wealthScore ?? p.wealth_score, null);
+  // --- PRICE ---
+  p.minPrice = parseNum(
+      p.minPrice ??
+      p.min_price ??
+      p.minPriceInr ??
+      p.min_price_inr
+  );
+
+  p.maxPrice = parseNum(
+      p.maxPrice ??
+      p.max_price ??
+      p.maxPriceInr ??
+      p.max_price_inr
+  );
+
+  // --- RENT YIELD ---
+  p.rentYieldPercent = parseNum(
+      p.rentYieldPercent ??
+      p.avgRentYield ??
+      p.rent_yield
+  );
+
+  // --- SCORES (Mappings based on your emergent preview site) ---
+  p.fundamentalsScore = parseNum(
+      p.fundamentalsScore ??
+      p.fundamentals ??
+      p.fundamentalScore
+  );
+
+  p.environmentalScore = parseNum(
+      p.environmentalScore ??
+      p.env ??
+      p.environment_score
+  );
+
+  p.locationScore = parseNum(
+      p.locationScore ??
+      p.location ??
+      p.location_score
+  );
+
+  p.builderReputationScore = parseNum(
+      p.builderReputationScore ??
+      p.builder ??
+      p.builder_score
+  );
+
+  p.deliveryHistoryScore = parseNum(
+      p.deliveryHistoryScore ??
+      p.delivery ??
+      p.delivery_score
+  );
+
+  p.vacancyRiskScore = parseNum(
+      p.vacancyRiskScore ??
+      p.vacancy ??
+      p.vacancy_risk_score
+  );
+
+  p.safetyIndex = parseNum(
+      p.safetyIndex ??
+      p.safety ??
+      p.safety_score
+  );
+
+  p.communityScore = parseNum(
+      p.communityScore ??
+      p.community ??
+      p.community_score
+  );
+
+  // DEMAND (unsold/total)
+  p.totalUnits = parseNum(
+      p.totalUnits ??
+      p.total_units ??
+      p.totalUnitsBuilt ??
+      p.unitsTotal ??
+      p.total
+  );
+
+  p.unsoldUnits = parseNum(
+      p.unsoldUnits ??
+      p.unsold ??
+      p.unsold_units ??
+      p.inventory
+  );
+
+  // --- DIRECT WEALTH SCORE FROM API ---
+  p.wealthScore = parseNum(
+      p.wealthScore ??
+      p.wealth_score ??
+      null
+  );
 
   return p;
 }
+
 
 // helpers used by score calculation
 const L = (v) => Math.max(0, Math.min(1, Number(v) || 0));
