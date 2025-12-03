@@ -17,18 +17,16 @@ Features:
 - Simple responsive layout
 
 Note: This is purposely light, no frameworks. Tweak styles or copy into a React app later.
--->
-
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WEALTH - Demo</title>
+  <title>WEALTH - Demo (Patched & Debug)</title>
   <style>
     :root{--accent:#0f62fe;--muted:#6b6b6b;--card:#fff;--bg:#f6f8fb}
     *{box-sizing:border-box}
-    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial; margin:0;background:var(--bg);color:#111}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;margin:0;background:var(--bg);color:#111}
     header{background:linear-gradient(90deg,#0747a6 0%, #0f62fe 100%);color:#fff;padding:18px 22px;display:flex;align-items:center;justify-content:space-between}
     header h1{font-size:18px;margin:0}
     header .controls{display:flex;gap:10px;align-items:center}
@@ -41,10 +39,10 @@ Note: This is purposely light, no frameworks. Tweak styles or copy into a React 
     .card{background:var(--card);border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(12,18,26,0.06)}
     .card h3{margin:0 0 6px 0;font-size:16px}
     .meta{font-size:13px;color:var(--muted);margin-bottom:8px}
-    .score{display:inline-block;padding:6px 8px;border-radius:8px;background:#f1f6ff;color:var(--accent);font-weight:600}
+    .score{display:inline-block;padding:6px 8px;border-radius:8px;background:#f1f6ff;color:var(--accent);font-weight:700}
     .card .actions{display:flex;gap:8px;margin-top:10px}
     .small{font-size:13px;color:var(--muted)}
-
+    .tag{font-size:12px;padding:4px 8px;border-radius:999px;background:#f4f6fb;color:#0b57d0}
     /* modal */
     .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:none;align-items:center;justify-content:center}
     .modal{background:#fff;padding:18px;border-radius:10px;width:520px;max-width:95%;box-shadow:0 10px 40px rgba(2,6,23,0.3)}
@@ -53,15 +51,15 @@ Note: This is purposely light, no frameworks. Tweak styles or copy into a React 
     label{display:block;font-size:13px;color:#333;margin-bottom:6px}
     input[type=text],input[type=email],textarea{width:100%;padding:9px;border-radius:8px;border:1px solid #e6eef8}
     textarea{min-height:100px}
-
     footer{max-width:1100px;margin:26px auto;padding:0 18px;color:var(--muted);font-size:13px}
-
+    .diagnostic{background:#fff;border-radius:8px;padding:12px;margin-bottom:12px;border:1px solid #e6eef8;font-size:13px}
+    .log{background:#0b1220;color:#fff;padding:8px;border-radius:6px;font-family:monospace;white-space:pre-wrap;max-height:200px;overflow:auto}
     @media(max-width:600px){header{padding:12px} .toolbar{flex-direction:column} .card{padding:12px}}
   </style>
 </head>
 <body>
   <header>
-    <h1>WEALTH — Demo</h1>
+    <h1>WEALTH — Demo (Patched & Debug)</h1>
     <div class="controls">
       <button class="btn" id="openAdmin">Admin</button>
       <button class="btn" id="openLead">Submit Lead</button>
@@ -69,6 +67,19 @@ Note: This is purposely light, no frameworks. Tweak styles or copy into a React 
   </header>
 
   <main class="container">
+    <div class="diagnostic">
+      <strong>Diagnostics</strong><br/>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <input id="apiInput" class="input" style="flex:1" placeholder="Paste Apps Script exec URL here (no ?json=1)" />
+        <button id="saveApi" class="btn">Set API</button>
+        <button id="testApi" class="btn">Test</button>
+      </div>
+      <div style="margin-top:8px;font-size:13px;color:var(--muted)">Current API: <span id="currentApi">(not set)</span></div>
+      <div style="margin-top:8px">Last status: <span id="apiStatus">idle</span></div>
+      <div style="margin-top:8px">Response preview:</div>
+      <div id="preview" class="log">(no response yet)</div>
+    </div>
+
     <div class="toolbar">
       <input id="search" class="input" placeholder="Search by project or location..." />
       <select id="scoreFilter" class="select">
@@ -84,11 +95,10 @@ Note: This is purposely light, no frameworks. Tweak styles or copy into a React 
     </div>
 
     <div id="list" class="grid"></div>
-
     <div id="empty" style="display:none;text-align:center;color:var(--muted);margin-top:40px">No projects found.</div>
   </main>
 
-  <footer>Tip: Replace <code>API_URL</code> in the JS with your Apps Script Exec URL. Deploy this single file to Netlify Drop for HTTPS hosting.</footer>
+  <footer>Tip: Use the diagnostics box above to set your Apps Script Exec URL and run tests. If you see CORS errors, ensure your Apps Script deployment has "Who has access" set to "Anyone, even anonymous" and "Execute as" set to your account.</footer>
 
   <!-- Lead Modal -->
   <div id="leadModal" class="modal-backdrop">
@@ -116,25 +126,151 @@ Note: This is purposely light, no frameworks. Tweak styles or copy into a React 
   </div>
 
 <script>
-// ===== CONFIG =====
-const API_URL = 'https://script.google.com/macros/s/AKfycbzbvjRsXpzWHPFcuP0gSU70X_Gmj4_TIhOz0Mdtj2isrRncV5bWjlkYm8yG24MMZb4a/exec'; // <--- replace with your Apps Script exec URL
-// ==================
+// Diagnostic-friendly patched frontend
 
+// Instead of a hard-coded API_URL, we store in localStorage so user can set from diagnostics UI.
+const STORAGE_KEY = 'wealth_exec_url_v3';
 const $ = id => document.getElementById(id);
 let projectsCache = [];
 
-async function fetchProjects(){
+// Load saved API URL (if any)
+function getSavedApi() { return localStorage.getItem(STORAGE_KEY) || ''; }
+function saveApi(url) { if(url) localStorage.setItem(STORAGE_KEY, url); else localStorage.removeItem(STORAGE_KEY); }
+
+// Update diagnostics UI
+function setStatus(s) { $('apiStatus').textContent = s; }
+function setPreview(text) { $('preview').textContent = text; }
+function updateCurrentApiDisplay(){ const v = getSavedApi(); $('currentApi').textContent = v ? v : '(not set)'; $('apiInput').value = v; }
+
+// Simple fetch with timeout and detailed error handling
+async function fetchWithTimeout(url, opts={}, timeout=15000){
+  const controller = new AbortController();
+  const id = setTimeout(()=>controller.abort(), timeout);
   try{
-    const res = await fetch(API_URL+'?json=1');
-    const data = await res.json();
-    projectsCache = data;
-    renderList(data);
-  } catch(e){
-    console.error('fetch error', e);
-    alert('Failed to fetch projects. Check API_URL and deployment.');
+    const res = await fetch(url, {...opts, signal: controller.signal});
+    clearTimeout(id);
+    return res;
+  } catch(err){
+    clearTimeout(id);
+    throw err;
   }
 }
 
+// Use this to test API and then load projects
+async function testAndLoad(){
+  const api = getSavedApi();
+  if(!api){ setStatus('API not set'); setPreview('(set API above)'); return; }
+  setStatus('testing'); setPreview('(waiting...)');
+  try{
+    // try simple GET
+    const url = api + '?json=1';
+    const res = await fetchWithTimeout(url, {method:'GET'}, 15000);
+    const text = await res.text();
+    // Try parse JSON if possible
+    try{
+      const data = JSON.parse(text);
+      setStatus('200 OK');
+      setPreview(JSON.stringify(Array.isArray(data) ? data.slice(0,3) : data, null, 2));
+      projectsCache = Array.isArray(data) ? data : [];
+      window.__WEALTH_PROJECTS = projectsCache;
+      renderList(projectsCache);
+    } catch(parseErr){
+      setStatus('Invalid JSON');
+      setPreview(text);
+      projectsCache = [];
+      renderList(projectsCache);
+    }
+  } catch(e){
+    console.error('fetch error', e);
+    if(e.name === 'AbortError'){
+      setStatus('Timeout');
+      setPreview('Request timed out (fetch aborted) — network slow or blocking.');
+    } else {
+      setStatus('Network/Error');
+      // Show as much useful info as possible
+      setPreview(String(e));
+    }
+    projectsCache = [];
+    renderList(projectsCache);
+  }
+}
+
+// ------------------ WEALTH SCORE ENGINE v2 (unchanged) ------------------
+const N = (v, f = 0) => (v === null || v === undefined || isNaN(v)) ? f : Number(v);
+const L = (v) => Math.max(0, Math.min(1, v));
+const S10 = (v) => L(N(v) / 10);
+function affordability(minPrice, maxPrice) {
+  const avg = N(minPrice) && N(maxPrice) ? (minPrice + maxPrice) / 2 : 0;
+  if (!avg) return 0.5;
+  const benchmark = 7500000;
+  const ratio = avg / benchmark;
+  const val = 1 - Math.log10(ratio > 0 ? ratio : 1);
+  return L(val);
+}
+const rentYieldScore = (yieldPercent) => L(N(yieldPercent) / 8);
+const invert10 = (v) => L(1 - S10(v));
+function demandScore(unsoldUnits, totalUnits) {
+  if (!N(totalUnits)) return 0.5;
+  const ratio = N(unsoldUnits) / totalUnits;
+  return L(1 - ratio);
+}
+
+function computeWealthScoreV2(p) {
+  const fFund = S10(p.fundamentalsScore);
+  const fEnv = S10(p.environmentalScore);
+  const fLoc = S10(p.locationScore);
+  const fPers = S10(p.personalScore);
+  const fBuilder = S10(p.builderReputationScore);
+  const fDelivery = S10(p.deliveryHistoryScore);
+  const fVacancy = invert10(p.vacancyRiskScore);
+  const fSafety = S10(p.safetyIndex);
+  const fCommunity = S10(p.communityScore || p.communityProfileScore);
+
+  const fAff = affordability(p.minPrice, p.maxPrice);
+  const fYield = rentYieldScore(p.rentYieldPercent);
+  const fDemand = demandScore(p.unsoldUnits, p.totalUnits);
+
+  const w = {
+    fundamentals: 0.20,
+    location: 0.18,
+    affordability: 0.15,
+    rentYield: 0.10,
+    builder: 0.08,
+    delivery: 0.06,
+    environmental: 0.05,
+    safety: 0.05,
+    vacancy: 0.05,
+    demand: 0.04,
+    personal: 0.04
+  };
+
+  const score =
+    fFund * w.fundamentals +
+    fLoc * w.location +
+    fAff * w.affordability +
+    fYield * w.rentYield +
+    fBuilder * w.builder +
+    fDelivery * w.delivery +
+    fEnv * w.environmental +
+    fSafety * w.safety +
+    fVacancy * w.vacancy +
+    fDemand * w.demand +
+    fPers * w.personal;
+
+  return Math.round(L(score) * 100);
+}
+
+function wealthScore(p) {
+  if (!p) return 0;
+  if (p.wealthScore !== undefined && p.wealthScore !== null) {
+    const n = Number(p.wealthScore);
+    if (!isNaN(n)) return n > 1 ? Math.round(n) : Math.round(n * 100);
+  }
+  return computeWealthScoreV2(p);
+}
+// ------------------ END WEALTH SCORE ENGINE ------------------
+
+// Render functions (unchanged)
 function renderList(arr){
   const list = $('list');
   list.innerHTML='';
@@ -147,7 +283,7 @@ function renderList(arr){
     if(q && !(name.includes(q)||loc.includes(q))) return false;
     if(scoreFilter!=='all'){
       const min = Number(scoreFilter);
-      const w = Number(p.wealthScore||0);
+      const w = Number(wealthScore(p) || 0);
       if(w < min) return false;
     }
     return true;
@@ -159,11 +295,15 @@ function renderList(arr){
   filtered.forEach(p=>{
     const el = document.createElement('div'); el.className='card';
     const name = p.projectName || p.projectId || 'Unnamed';
+    const scoreVal = wealthScore(p);
     el.innerHTML = `
       <h3>${escapeHtml(name)}</h3>
       <div class="meta">${escapeHtml(p.microLocation||'')} • ${escapeHtml(p.zone||'')}</div>
-      <div><span class="score">${Math.round(Number(p.wealthScore||0))}</span></div>
-      <div class="small">Price: ${formatMoney(p.minPrice)} - ${formatMoney(p.maxPrice)} | Avg Rent Yield: ${p.rentYieldPercent||'N/A'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="tag">${escapeHtml(p.segment||'')}</div>
+        <div><span class="score">${scoreVal}</span></div>
+      </div>
+      <div class="small" style="margin-top:8px">Price: ${formatMoney(p.minPrice)} - ${formatMoney(p.maxPrice)} • Rent Yield: ${p.rentYieldPercent||'N/A'}%</div>
       <div class="actions">
         <button class="btn" onclick="openLeadModal('${escapeHtml(p.projectId||'')}')">Enquire</button>
         <button class="btn" onclick="showDetails('${escapeHtml(p.projectId||'')}')">Details</button>
@@ -173,8 +313,8 @@ function renderList(arr){
   });
 }
 
-function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;" })[c]); }
-function formatMoney(v){ if(!v) return '—'; return '₹'+Number(v).toLocaleString(); }
+function escapeHtml(s){ if(s === null || s === undefined) return ''; return String(s).replace(/[&<>\"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":"&#39;" })[c]); }
+function formatMoney(v){ if(!v) return '—'; try { return '₹'+Number(v).toLocaleString(); } catch(e){ return '₹'+v; } }
 
 // Lead Modal
 $('openLead').addEventListener('click',()=>openLeadModal(''));
@@ -188,7 +328,7 @@ $('leadSend').addEventListener('click',async ()=>{
   if(!name || !email){ alert('Enter name and email'); return; }
   const payload = { action:'lead', projectId: pid, projectName:'', name, email, phone, note:'Lead from demo frontend', source:'frontend' };
   try{
-    const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const r = await fetch(getSavedApi() || '#', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const j = await r.json();
     if(j.success){ alert('Lead submitted'); $('leadModal').style.display='none'; } else alert('Lead failed: '+(j.error||'unknown'));
   }catch(e){ alert('Request failed: '+e); }
@@ -206,22 +346,26 @@ $('adminSend').addEventListener('click',async ()=>{
   if(!key || !pid){ alert('API key and projectId required'); return; }
   const payload = { action:'emergent', projectId: pid, emergentType: type, emergentSeverity: sev, emergentNotes: notes, emergentSource:'admin-ui', apiKey: key };
   try{
-    const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const r = await fetch(getSavedApi() || '#', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const j = await r.json();
-    if(j.success){ alert('Emergent reported'); $('adminModal').style.display='none'; fetchProjects(); } else alert('Emergent failed: '+(j.error||'unknown'));
+    if(j.success){ alert('Emergent reported'); $('adminModal').style.display='none'; testAndLoad(); } else alert('Emergent failed: '+(j.error||'unknown'));
   }catch(e){ alert('Request failed: '+e); }
 });
 
 // Helpers
-function showDetails(pid){ const p = projectsCache.find(x=>String(x.projectId)===String(pid)); if(!p){ alert('Project not found'); return; } alert('Project: '+(p.projectName||p.projectId)+'\nWealth Score: '+p.wealthScore+'\nLocation: '+p.microLocation); }
+function showDetails(pid){ const p = projectsCache.find(x=>String(x.projectId)===String(pid)); if(!p){ alert('Project not found'); return; } alert('Project: '+(p.projectName||p.projectId)+'\nWealth Score: '+wealthScore(p)+'\nLocation: '+p.microLocation); }
 
 // Search + filter
 $('search').addEventListener('input',()=>renderList(projectsCache));
 $('scoreFilter').addEventListener('change',()=>renderList(projectsCache));
-$('refresh').addEventListener('click',fetchProjects);
+$('refresh').addEventListener('click',testAndLoad);
 
-// initial
-fetchProjects();
+// Diagnostics buttons
+$('saveApi').addEventListener('click',()=>{ const v = $('apiInput').value.trim(); if(!v){ saveApi(''); updateCurrentApiDisplay(); alert('Cleared API URL'); return; } saveApi(v); updateCurrentApiDisplay(); alert('Saved API URL'); });
+$('testApi').addEventListener('click',()=>{ updateCurrentApiDisplay(); testAndLoad(); });
+
+// initial UI
+updateCurrentApiDisplay();
 
 </script>
 </body>
